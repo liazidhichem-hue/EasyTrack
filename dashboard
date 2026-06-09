@@ -1,4 +1,190 @@
- 
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Truck, CheckCircle2, XCircle, Search, RefreshCw, BarChart3, Box, Settings, ChevronLeft, ChevronRight, Timer, Key, ArrowLeft, Package } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Label } from "@/components/ui/label";
+
+const MaystroIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M12 2.5L3.5 7.4v9.2L12 21.5l8.5-4.9V7.4L12 2.5zm0 2.4l6 3.5-2.5 1.4-3.5-2-3.5 2-2.5-1.4 6-3.5zm-6.5 4.5l2.5 1.4v4.5l-2.5-1.4V9.4zm13 0v4.5l-2.5 1.4V10.8l2.5-1.4zm-6.5 3.8l-2.5-1.4v-3l2.5 1.4 2.5-1.4v3l-2.5 1.4z" />
+  </svg>
+);
+
+type ApiKeys = {
+  yalidineAppId: string;
+  yalidineAppToken: string;
+  maystroToken: string;
+  maystroStoreId: string;
+  dhdToken: string;
+};
+
+type Shipment = {
+  id: string;
+  carrier: string;
+  recipient: string;
+  wilaya: string;
+  status: string;
+  date: string;
+};
+
+const DEFAULT_KEYS: ApiKeys = {
+  yalidineAppId: "",
+  yalidineAppToken: "",
+  maystroToken: "",
+  maystroStoreId: "",
+  dhdToken: ""
+};
+
+function mapYalidineStatus(status: string): string {
+  const s = status.toLowerCase().trim();
+  const dispatch = ["pas encore expédié", "en préparation", "pas encore ramassé", "prêt à expédier", "en passation", "a vérifier"];
+  const enCours = ["ramassé", "expédié", "centre", "transfert", "vers wilaya", "en transit", "en localisation", "bloqué", "débloqué"];
+  const enLivraison = ["reçu à wilaya", "en attente du client", "prêt pour livreur", "sorti en livraison", "en attente"];
+  const livre = ["livré"];
+  const annule = ["annulé", "echèc livraison", "tentative échouée", "en alerte", "alerte résolue"];
+  const retourne = ["retour vers centre", "retourné au centre", "retour transfert", "retour groupé", "retour à retirer", "retour vers vendeur", "retourné au vendeur", "echange échoué"];
+
+  if (dispatch.includes(s)) return "Dispatch";
+  if (enCours.includes(s)) return "En cours";
+  if (enLivraison.includes(s)) return "En livraison";
+  if (livre.includes(s)) return "Livré";
+  if (annule.includes(s)) return "Annulé";
+  if (retourne.includes(s)) return "Retourné";
+  return "Autre";
+}
+
+function mapMaystroStatus(status: string): string {
+  const s = status.toLowerCase().trim();
+  const dispatch = ["order_information_received_by_carrier"];
+  const enCours = ["picked", "accepted_by_carrier"];
+  const enLivraison = ["dispatched_to_driver", "attempt_delivery"];
+  const livre = ["livred", "encaissed", "payed"];
+  const retourne = ["return_asked", "return_in_transit", "return_received"];
+  
+  if (dispatch.includes(s)) return "Dispatch";
+  if (enCours.includes(s)) return "En cours";
+  if (enLivraison.includes(s)) return "En livraison";
+  if (livre.includes(s)) return "Livré";
+  if (retourne.includes(s)) return "Retourné";
+  return "Autre";
+}
+
+function mapDhdStatus(status: string): string {
+  const s = status.toLowerCase().trim();
+  const dispatch = ["en préparation", "prêt à expédier"];
+  const enCours = ["en ramassage", "vers station", "en station", "vers wilaya"];
+  const enLivraison = ["en livraison"];
+  const livre = ["livrés", "livré"];
+  const annule = ["suspendus"];
+  const retourne = ["retours"];
+
+  if (dispatch.includes(s)) return "Dispatch";
+  if (enCours.includes(s)) return "En cours";
+  if (enLivraison.includes(s)) return "En livraison";
+  if (livre.includes(s)) return "Livré";
+  if (annule.includes(s)) return "Annulé";
+  if (retourne.includes(s)) return "Retourné";
+  return "Autre";
+}
+
+async function fetchUnifiedShipments(keys: ApiKeys): Promise<Shipment[]> {
+  let shipments: Shipment[] = [];
+
+  // 1. Yalidine
+  if (keys.yalidineAppId && keys.yalidineAppToken) {
+    try {
+      const res = await fetch(`https://thingproxy.freeboard.io/fetch/https://api.yalidine.app/v1/parcels/`, {
+        headers: {
+          "X-API-ID": keys.yalidineAppId,
+          "X-API-TOKEN": keys.yalidineAppToken,
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const yalData = (json.data || []).map((p: any) => ({
+          id: p.tracking,
+          carrier: "Yalidine",
+          recipient: p.receiver_name || "Inconnu",
+          wilaya: p.wilaya_name || "Inconnu",
+          status: mapYalidineStatus(p.last_status || "Pending"),
+          date: p.date_last_status || p.created_at || new Date().toISOString(),
+        }));
+        shipments = [...shipments, ...yalData];
+      }
+    } catch (error) {
+      console.error("Erreur de récupération Yalidine:", error);
+    }
+  }
+
+  // 2. Maystro
+  if (keys.maystroToken && keys.maystroStoreId) {
+    try {
+      const res = await fetch(`https://thingproxy.freeboard.io/fetch/https://orders-management.maystro-delivery.com/api/orders/?store_id=${keys.maystroStoreId}`, {
+        headers: {
+          "Authorization": `Bearer ${keys.maystroToken}`,
+          "Content-Type": "application/json",
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const maystroData = (json.data || []).map((p: any) => ({
+          id: p.tracking_number || p.id,
+          carrier: "Maystro",
+          recipient: p.customer_name || "Inconnu",
+          wilaya: p.wilaya || "Inconnu",
+          status: mapMaystroStatus(p.status || "Pending"),
+          date: p.updated_at || new Date().toISOString(),
+        }));
+        shipments = [...shipments, ...maystroData];
+      }
+    } catch (error) {
+      console.error("Erreur de récupération Maystro:", error);
+    }
+  }
+
+  // 3. DHD
+  if (keys.dhdToken) {
+    try {
+      const res = await fetch(`https://thingproxy.freeboard.io/fetch/https://dhd-dz.com/api/shipments`, {
+        headers: {
+          "Authorization": `Bearer ${keys.dhdToken}`,
+          "Content-Type": "application/json",
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const dhdData = (json.data || []).map((p: any) => ({
+          id: p.tracking_code || p.id,
+          carrier: "DHD",
+          recipient: p.receiver || "Inconnu",
+          wilaya: p.destination || "Inconnu",
+          status: mapDhdStatus(p.status || "Pending"),
+          date: p.updated_at || new Date().toISOString(),
+        }));
+        shipments = [...shipments, ...dhdData];
+      }
+    } catch (error) {
+      console.error("Erreur de récupération DHD:", error);
+    }
+  }
+
+  return shipments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+export default function Index() {
+  const { toast } = useToast();
+  const [keys, setKeys] = useState<ApiKeys>(() => {
+    const saved = localStorage.getItem("easy-keys");
+    return saved ? JSON.parse(saved) : DEFAULT_KEYS;
+  });
+  const [isConfiguring, setIsConfiguring] = useState(!keys.yalidineAppId && !(keys.maystroToken && keys.maystroStoreId) && !keys.dhdToken);
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [carrierFilter, setCarrierFilter] = useState("tous");
   const [statusFilter, setStatusFilter] = useState("tous");
