@@ -1,0 +1,461 @@
+ 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [carrierFilter, setCarrierFilter] = useState("tous");
+  const [statusFilter, setStatusFilter] = useState("tous");
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Auto-refresh timer (45 minutes = 2700 seconds)
+  const [countdown, setCountdown] = useState(2700);
+
+  const { data: shipments = [], isLoading, refetch, isRefetching } = useQuery({
+    queryKey: ["unified-shipments", keys],
+    queryFn: () => fetchUnifiedShipments(keys),
+    enabled: !isConfiguring && (!!keys.yalidineAppId || (!!keys.maystroToken && !!keys.maystroStoreId) || !!keys.dhdToken),
+    refetchInterval: 2700000,
+  });
+
+  useEffect(() => {
+    if (isConfiguring) return;
+    
+    setCountdown(2700);
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          refetch();
+          return 2700;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isConfiguring, refetch]);
+
+  const formatCountdown = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m > 0) return `${m} min ${s.toString().padStart(2, '0')} s`;
+    return `${s} s`;
+  };
+
+  const handleSaveKeys = (newKeys: ApiKeys) => {
+    setKeys(newKeys);
+    localStorage.setItem("easy-keys", JSON.stringify(newKeys));
+    setIsConfiguring(false);
+    toast({ title: "Clés API Enregistrées", description: "Votre tableau de bord est prêt." });
+  };
+
+  const handleRefresh = () => {
+    setCountdown(2700);
+    refetch();
+    toast({ title: "Actualisation des données", description: "Récupération des dernières mises à jour de tous les transporteurs..." });
+  };
+
+  if (isConfiguring) {
+    return <SetupScreen initialKeys={keys} onSave={handleSaveKeys} onCancel={() => setIsConfiguring(false)} />;
+  }
+
+  const filteredShipments = shipments.filter((s) => {
+    const matchesSearch = s.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          s.recipient.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCarrier = carrierFilter === "tous" || s.carrier.toLowerCase() === carrierFilter.toLowerCase();
+    
+    let matchesStatus = true;
+    if (statusFilter !== "tous") {
+      matchesStatus = s.status.toLowerCase() === statusFilter.toLowerCase();
+    }
+    
+    return matchesSearch && matchesCarrier && matchesStatus;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredShipments.length / itemsPerPage));
+  const paginatedShipments = filteredShipments.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const totalShipments = shipments.length;
+  const deliveredCount = shipments.filter(s => s.status === "Livré").length;
+  const transitCount = shipments.filter(s => s.status === "En cours" || s.status === "En livraison" || s.status === "Dispatch").length;
+  const returnedCount = shipments.filter(s => s.status === "Retourné" || s.status === "Annulé").length;
+
+  const getStatusBadge = (status: string) => {
+    if (status === "Livré") return <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.2)]">Livré</Badge>;
+    if (status === "Retourné") return <Badge className="bg-rose-500/20 text-rose-400 border border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.2)]">Retourné</Badge>;
+    if (status === "Annulé") return <Badge className="bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.2)]">Annulé</Badge>;
+    if (status === "En cours") return <Badge className="bg-blue-500/20 text-blue-400 border border-blue-500/50 shadow-[0_0_10px_rgba(59,130,246,0.2)]">En cours</Badge>;
+    if (status === "En livraison") return <Badge className="bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]">En livraison</Badge>;
+    if (status === "Dispatch") return <Badge className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 shadow-[0_0_10px_rgba(99,102,241,0.2)]">Dispatch</Badge>;
+    return <Badge className="bg-slate-500/20 text-slate-400 border border-slate-500/50">Autre</Badge>;
+  };
+
+  const getCarrierBadge = (carrier: string) => {
+    if (carrier.toLowerCase() === "yalidine") return <Badge variant="outline" className="border-red-500/50 text-red-400 bg-red-500/10 flex items-center gap-1.5 w-fit"><Truck className="w-3 h-3 text-red-500" /> Yalidine</Badge>;
+    if (carrier.toLowerCase() === "maystro") return <Badge variant="outline" className="border-[#00A3FF]/50 text-[#00A3FF] bg-[#00A3FF]/10 flex items-center gap-1.5 w-fit"><MaystroIcon className="w-3 h-3 text-[#00A3FF]" /> Maystro</Badge>;
+    if (carrier.toLowerCase() === "dhd") return <Badge variant="outline" className="border-orange-500/50 text-orange-400 bg-orange-500/10 flex items-center gap-1.5 w-fit"><Package className="w-3 h-3 text-orange-500" /> DHD</Badge>;
+    return <Badge variant="outline">{carrier}</Badge>;
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0F] text-foreground relative overflow-hidden font-sans pb-10">
+      {/* Background Gradients */}
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-blue-600/10 blur-[120px] pointer-events-none" />
+
+      {/* Navbar */}
+      <nav className="border-b border-white/10 bg-black/20 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-16 grid grid-cols-3 items-center">
+          <div className="flex items-center gap-3 justify-start">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.5)]">
+              <Box className="w-5 h-5 text-white" />
+            </div>
+            <span className="font-bold text-xl tracking-tight text-white hidden sm:inline-block">Easy<span className="text-primary">Track</span></span>
+          </div>
+          
+          <div className="flex items-center justify-center gap-2 sm:gap-4 w-full">
+            <button 
+              onClick={() => { setCarrierFilter(carrierFilter === 'yalidine' ? 'tous' : 'yalidine'); setCurrentPage(1); }}
+              className={`flex items-center justify-center w-24 sm:w-32 gap-2 h-10 rounded-lg border transition-all ${carrierFilter === 'yalidine' ? 'border-red-500 bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.4)] text-white' : 'border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-white'} ${!keys.yalidineAppId ? 'opacity-50' : ''}`}
+            >
+              <Truck className={`w-4 h-4 hidden sm:block ${carrierFilter === 'yalidine' ? 'text-white' : 'text-red-500'}`} />
+              <span className="text-sm font-bold tracking-wide">Yalidine</span>
+            </button>
+            
+            <button 
+              onClick={() => { setCarrierFilter(carrierFilter === 'dhd' ? 'tous' : 'dhd'); setCurrentPage(1); }}
+              className={`flex items-center justify-center w-24 sm:w-32 gap-2 h-10 rounded-lg border transition-all ${carrierFilter === 'dhd' ? 'border-orange-500 bg-[#E65100] shadow-[0_0_15px_rgba(230,81,0,0.4)] text-white' : 'border-orange-500/30 bg-orange-500/10 hover:bg-orange-500/20 text-white'} ${!keys.dhdToken ? 'opacity-50' : ''}`}
+            >
+              <Package className={`w-4 h-4 hidden sm:block ${carrierFilter === 'dhd' ? 'text-white' : 'text-orange-500'}`} />
+              <span className="text-sm font-bold tracking-wide">DHD</span>
+            </button>
+
+            <button 
+              onClick={() => { setCarrierFilter(carrierFilter === 'maystro' ? 'tous' : 'maystro'); setCurrentPage(1); }}
+              className={`flex items-center justify-center w-24 sm:w-32 gap-2 h-10 rounded-lg border transition-all ${carrierFilter === 'maystro' ? 'border-[#00A3FF] bg-[#00A3FF] shadow-[0_0_15px_rgba(0,163,255,0.4)] text-white' : 'border-[#00A3FF]/30 bg-[#00A3FF]/10 hover:bg-[#00A3FF]/20 text-white'} ${!(keys.maystroToken && keys.maystroStoreId) ? 'opacity-50' : ''}`}
+            >
+              <MaystroIcon className={`w-4 h-4 hidden sm:block ${carrierFilter === 'maystro' ? 'text-white' : 'text-[#00A3FF]'}`} />
+              <span className="text-sm font-bold tracking-wide">Maystro</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-4 justify-end">
+            <div className="hidden lg:flex items-center gap-2 text-sm text-muted-foreground mr-2">
+              <Timer className="w-4 h-4" />
+              <span className="min-w-[70px] text-center">{formatCountdown(countdown)}</span>
+            </div>
+            <Button onClick={handleRefresh} disabled={isLoading || isRefetching} variant="outline" size="sm" className={`gap-2 transition-all hidden md:flex disabled:opacity-100 ${(isLoading || isRefetching) ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : 'border-white/10 bg-white/5 hover:bg-white/10 hover:text-white text-white'}`}>
+              <RefreshCw className={`h-4 w-4 ${(isLoading || isRefetching) ? "animate-spin" : ""}`} />
+              <span>Actualiser</span>
+            </Button>
+            <Button onClick={handleRefresh} disabled={isLoading || isRefetching} variant="ghost" size="icon" className={`md:hidden transition-all disabled:opacity-100 ${(isLoading || isRefetching) ? 'text-emerald-400 bg-emerald-500/20' : 'text-white hover:bg-white/10'}`}>
+              <RefreshCw className={`h-5 w-5 ${(isLoading || isRefetching) ? "animate-spin" : ""}`} />
+            </Button>
+            <Button onClick={() => setIsConfiguring(true)} variant="ghost" size="icon" className="text-white hover:bg-white/10">
+              <Settings className="w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      </nav>
+
+      <div className="max-w-7xl mx-auto p-6 md:p-8 space-y-8 relative z-10">
+        
+        {/* Header */}
+        <div className="flex flex-col gap-2">
+<h1 className="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">
+            Multi Login
+          </h1>
+          <p className="text-muted-foreground text-lg">Surveillez votre logistique sur toutes les sociétés de livraison en temps réel.</p>
+        </div>
+
+        {/* KPIs */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { title: "Volume Total", value: totalShipments, icon: BarChart3, color: "text-primary", bg: "bg-primary/10", border: "border-primary/20" },
+            { title: "En cours", value: transitCount, icon: Truck, color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+            { title: "Livré", value: deliveredCount, icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+            { title: "Retourné / Annulé", value: returnedCount, icon: XCircle, color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" }
+          ].map((kpi, i) => (
+            <Card key={i} className={`bg-black/40 backdrop-blur-xl border-white/10 shadow-xl overflow-hidden group hover:border-white/20 transition-all duration-300`}>
+              <CardContent className="p-6 relative">
+                <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-transparent to-white/5 rounded-bl-full -mr-16 -mt-16 transition-transform group-hover:scale-110`} />
+                <div className="flex items-center justify-between space-y-0 pb-4">
+                  <p className="text-sm font-medium text-muted-foreground">{kpi.title}</p>
+                  <div className={`p-2 rounded-lg ${kpi.bg} ${kpi.border} border`}>
+                    <kpi.icon className={`h-5 w-5 ${kpi.color}`} />
+                  </div>
+                </div>
+                <div className="flex items-baseline space-x-2">
+                  <h2 className="text-4xl font-bold text-white tracking-tight">
+                    {isLoading ? "-" : kpi.value}
+                  </h2>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Filters and Table */}
+        <Card className="bg-black/40 backdrop-blur-xl border-white/10 shadow-2xl">
+          <CardHeader className="border-b border-white/5 pb-6">
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+              <CardTitle className="text-xl text-white font-semibold">Expéditions Actives</CardTitle>
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Rechercher un numéro ou un nom..."
+                    className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-muted-foreground focus-visible:ring-primary"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+                <Select value={carrierFilter} onValueChange={(v) => { setCarrierFilter(v); setCurrentPage(1); }}>
+                  <SelectTrigger className="w-full sm:w-[140px] bg-white/5 border-white/10 text-white focus:ring-primary">
+                    <SelectValue placeholder="Transporteur" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1A24] border-white/10 text-white">
+                    <SelectItem value="tous">Tous</SelectItem>
+                    <SelectItem value="yalidine">Yalidine</SelectItem>
+                    <SelectItem value="maystro">Maystro</SelectItem>
+                    <SelectItem value="dhd">DHD</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
+                  <SelectTrigger className="w-full sm:w-[140px] bg-white/5 border-white/10 text-white focus:ring-primary">
+                    <SelectValue placeholder="Statut" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1A24] border-white/10 text-white">
+                    <SelectItem value="tous">Tous les statuts</SelectItem>
+                    <SelectItem value="Dispatch">Dispatch</SelectItem>
+                    <SelectItem value="En cours">En cours</SelectItem>
+                    <SelectItem value="En livraison">En livraison</SelectItem>
+                    <SelectItem value="Livré">Livré</SelectItem>
+                    <SelectItem value="Annulé">Annulé</SelectItem>
+                    <SelectItem value="Retourné">Retourné</SelectItem>
+                    <SelectItem value="Autre">Autre</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader className="bg-white/[0.02]">
+                  <TableRow className="border-white/10 hover:bg-transparent">
+                    <TableHead className="text-muted-foreground font-medium h-12 pl-6">N° de Suivi</TableHead>
+                    <TableHead className="text-muted-foreground font-medium h-12">Transporteur</TableHead>
+                    <TableHead className="text-muted-foreground font-medium h-12">Destinataire</TableHead>
+                    <TableHead className="text-muted-foreground font-medium h-12">Destination</TableHead>
+                    <TableHead className="text-muted-foreground font-medium h-12">Statut</TableHead>
+                    <TableHead className="text-muted-foreground font-medium h-12 text-right pr-6">Dernière Mise à Jour</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow className="border-white/10">
+                      <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                          <span>Synchronisation avec les transporteurs...</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : paginatedShipments.length === 0 ? (
+                    <TableRow className="border-white/10">
+                      <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                        Aucune expédition ne correspond à vos critères.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    paginatedShipments.map((shipment) => (
+                      <TableRow key={shipment.id} className="border-white/5 hover:bg-white/[0.02] transition-colors">
+                        <TableCell className="font-medium text-white pl-6">{shipment.id}</TableCell>
+                        <TableCell>{getCarrierBadge(shipment.carrier)}</TableCell>
+                        <TableCell className="text-white/80">{shipment.recipient}</TableCell>
+                        <TableCell className="text-white/80">{shipment.wilaya}</TableCell>
+                        <TableCell>{getStatusBadge(shipment.status)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground pr-6">
+                          {new Date(shipment.date).toLocaleDateString(undefined, { 
+                            month: 'short', 
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            
+            {/* Pagination Controls */}
+            {filteredShipments.length > 0 && (
+              <div className="flex items-center justify-between px-6 py-4 border-t border-white/5">
+                <div className="text-sm text-muted-foreground">
+                  Affichage de <span className="text-white font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> à{" "}
+                  <span className="text-white font-medium">{Math.min(currentPage * itemsPerPage, filteredShipments.length)}</span> sur{" "}
+                  <span className="text-white font-medium">{filteredShipments.length}</span> résultats
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="border-white/10 bg-white/5 text-white hover:bg-white/10"
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" /> Précédent
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="border-white/10 bg-white/5 text-white hover:bg-white/10"
+                  >
+                    Suivant <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+      </div>
+    </div>
+  );
+}
+
+function SetupScreen({ initialKeys, onSave, onCancel }: { initialKeys: ApiKeys, onSave: (keys: ApiKeys) => void, onCancel?: () => void }) {
+  const [keys, setKeys] = useState<ApiKeys>(initialKeys);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(keys);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0F] text-foreground flex items-center justify-center p-6 relative overflow-hidden font-sans">
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-blue-600/10 blur-[120px] pointer-events-none" />
+      
+      <div className="w-full max-w-2xl relative z-10">
+        {onCancel && (
+          <Button 
+            variant="ghost" 
+            onClick={onCancel} 
+            className="text-white/60 hover:text-white hover:bg-white/10 mb-6 -ml-2"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Retour
+          </Button>
+        )}
+        <div className="flex flex-col items-center text-center mb-8 gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-[0_0_30px_rgba(124,58,237,0.5)]">
+            <Box className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2">Bienvenue sur EasyTrack</h1>
+            <p className="text-muted-foreground">Connectez vos comptes transporteurs pour commencer.</p>
+          </div>
+        </div>
+
+        <Card className="bg-black/40 backdrop-blur-xl border-white/10 shadow-2xl">
+          <form onSubmit={handleSubmit}>
+            <CardHeader>
+              <CardTitle className="text-xl text-white flex items-center gap-2">
+                <Key className="w-5 h-5 text-primary" />
+                Configuration API
+              </CardTitle>
+              <CardDescription className="text-white/60">
+                Entrez au moins une clé API pour commencer à surveiller vos expéditions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              
+              {/* Yalidine */}
+              <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="bg-red-500/20 text-red-400 border border-red-500/50">Yalidine</Badge>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-white/80">ID de l'application (X-API-ID)</Label>
+                  <Input 
+                    placeholder="Entrez l'ID de l'application Yalidine"
+                    className="bg-black/50 border-white/10 text-white"
+                    value={keys.yalidineAppId}
+                    onChange={e => setKeys({...keys, yalidineAppId: e.target.value})}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-white/80">Jeton de l'application (X-API-TOKEN)</Label>
+                  <Input 
+                    type="password"
+                    placeholder="Entrez le jeton de l'application Yalidine"
+                    className="bg-black/50 border-white/10 text-white"
+                    value={keys.yalidineAppToken}
+                    onChange={e => setKeys({...keys, yalidineAppToken: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Maystro */}
+              <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="bg-[#00A3FF]/20 text-[#00A3FF] border border-[#00A3FF]/50">Maystro</Badge>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-white/80">ID du Magasin (Store ID)</Label>
+                  <Input 
+                    placeholder="Entrez l'ID du magasin Maystro"
+                    className="bg-black/50 border-white/10 text-white"
+                    value={keys.maystroStoreId}
+                    onChange={e => setKeys({...keys, maystroStoreId: e.target.value})}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-white/80">Jeton API (Bearer Token)</Label>
+                  <Input 
+                    type="password"
+                    placeholder="Entrez le jeton Maystro"
+                    className="bg-black/50 border-white/10 text-white"
+                    value={keys.maystroToken}
+                    onChange={e => setKeys({...keys, maystroToken: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* DHD */}
+              <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="bg-orange-500/20 text-orange-400 border border-orange-500/50">DHD</Badge>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-white/80">Jeton Bearer</Label>
+                  <Input 
+                    type="password"
+                    placeholder="Entrez le jeton Bearer DHD"
+                    className="bg-black/50 border-white/10 text-white"
+                    value={keys.dhdToken}
+                    onChange={e => setKeys({...keys, dhdToken: e.target.value})}
+                  />
+                </div>
+              </div>
+
+            </CardContent>
+            <CardFooter>
+              <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-white" disabled={!keys.yalidineAppId && !(keys.maystroToken && keys.maystroStoreId) && !keys.dhdToken}>
+                Enregistrer & Continuer
+              </Button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
+    </div>
+  );
+}
